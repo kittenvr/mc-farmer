@@ -2,23 +2,22 @@ const mineflayer = require('mineflayer');
 const pathfinder = require("./pathfinder.js");
 const vec3 = require('vec3');
 
-const BED_TIME = 12000;
 
-let cropType = 'wheat_seeds'
-let seedName = 'wheat_seeds';
-let harvestName = 'wheat';
+
+let cropType = 'carrot'
+let seedName = 'carrot';
+let harvestName = 'carrots';
 
 let expansion = 0;
 let snackTime = false;
 
 const bot = mineflayer.createBot({
-	username: "FarmMachine",
 	host: "localhost",
-	port: 12345,
-	//viewDistance: "tiny",
+	port: 14763,
+	auth: 'microsoft'
 });
 
-let bedPosition;
+
 let chestPosition;
 let mcData;
 
@@ -48,9 +47,6 @@ bot.on('chat', async (username, message)=>{
 	let tokens = message.split(' ');
 
 	switch(tokens[0]) {
-		case 'bed':
-			bedPosition = vec3(parseInt(tokens[1]), parseInt(tokens[2]), parseInt(tokens[3]));
-			break;
 		case 'chest':
 			chestPosition = vec3(parseInt(tokens[1]), parseInt(tokens[2], parseInt(tokens[3])));
 			break;
@@ -83,7 +79,6 @@ bot.on('chat', async (username, message)=>{
 
 async function mainLoop() {
 	while (true) {
-		if (bot.time.timeOfDay > BED_TIME) await sleepInBed();
 		if (bot.inventory.slots.filter(v=>v==null).length < 11) await depositLoop();
 		if (bot.food <= 10 || snackTime) await takeSnackBreak();
 		
@@ -222,10 +217,8 @@ async function expandFarm() {
 		let dirt = bot.blockAt(position);
 		await bot.activateBlock(dirt, vec3(0, 1, 0)).catch(console.log);
 
-		await bot.waitForTicks(1);
-
 		// Plant seeds on dirt
-		if (!checkInventory("wheat_seeds")) await getSeeds();
+		if (!checkInventory("carrot")) await getSeeds();
 		if (!bot.heldItem || bot.heldItem.name !== seedName) await bot.equip(mcData.itemsByName[seedName].id).catch(console.log);
 
 		await bot.goto(position);
@@ -241,44 +234,23 @@ function checkInventory(itemName) {
 }
 
 async function getSeeds() {
-	if (checkInventory(seedName) >= 1) return;
+    if (checkInventory(seedName) >= 1) return;
 
-	while (true) {
-		let grassBlock = bot.findBlock({
-			matching: block=>{
-				if (block.name === harvestName && block.metadata === 7) return true;
-				return block.name === "grass" || block.name === "tall_grass";
-			},
-		});
+    // Look for an item entity with the name "carrot"
+    let itemEntity = bot.nearestEntity((entity)=>{
+        return entity.name === 'item' && entity.displayName === 'carrot';
+    });
 
-		if (!grassBlock) {
-			console.log("Couldn't find grass.");
-			return;
-		}
+    if (!itemEntity) return;
 
-		await bot.goto(grassBlock.position, 1.5);
+    await bot.goto(itemEntity.position);
+    await bot.waitForTicks(1);
 
-		await bot.dig(grassBlock);
-
-		bot.waitForTicks(1);
-		
-		// Look for an item entity with ID of 619 (wheat_seeds)
-		let itemEntity = bot.nearestEntity((entity)=>{
-			return entity.name === 'item' && entity.metadata[7].itemId === 619;
-		});
-
-		if (!itemEntity) continue;
-
-		await bot.goto(itemEntity.position);
-		await bot.waitForTicks(1);
-
-		if (checkInventory(seedName)) {
-			console.log("Found seeds.");
-			return;
-		}
-	}
+    if (checkInventory(seedName)) {
+        console.log("Found seeds.");
+        return;
+    }
 }
-
 
 async function getWood(amount=1) {
 	const logsList = [
@@ -420,20 +392,7 @@ async function getHoe() {
 	console.log("Equiped the hoe!");
 }
 
-async function sleepInBed() {
-	let bed = bot.findBlock({
-		matching: block=>bot.isABed(block),
-	});
 
-	if (!bed) {
-		console.log("Couldn't find bed.");
-		return;
-	}
-
-	await bot.goto(bed.position);
-
-	await bot.sleep(bed);
-}
 
 async function depositLoop() {
 	let chestBlock = bot.findBlock({
@@ -460,55 +419,72 @@ async function depositLoop() {
 }
 
 async function harvestCrops() {
-	let harvest = readyCrop();
+    let harvest = readyCrop();
 
-	if (!harvest) return;
+    if (!harvest) {
+        console.log("No harvestable crops found. Triggering farm expansion.");
+        await expandFarm();
+        return;
+    }
 
-	await bot.goto(harvest.position);
+    await bot.goto(harvest.position);
 
-	await bot.dig(harvest);
+    await bot.dig(harvest);
 
-	await bot.waitForTicks(1);
+    await bot.waitForTicks(1);
 
-	let itemEntity = bot.nearestEntity((entity)=>{
-		return entity.name.toLowerCase() === 'item'
-	});
+    let itemEntity = bot.nearestEntity((entity)=>{
+        return entity.name.toLowerCase() === 'item';
+    });
 
-	if (itemEntity) {
-		await bot.goto(itemEntity.position);
-		await bot.waitForTicks(1);
-	}
+    if (itemEntity) {
+        await bot.goto(itemEntity.position);
+        await bot.waitForTicks(1);
+    }
 
-	if (!bot.heldItem || bot.heldItem.name != seedName) {
-		await getSeeds();
-		await bot.equip(mcData.itemsByName[seedName].id);
-	}
+    if (!bot.heldItem || bot.heldItem.name != seedName) {
+        await getSeeds();
+        await bot.equip(mcData.itemsByName[seedName].id);
+    }
 
-	let dirt = bot.blockAt(harvest.position.offset(0, -1, 0));
-	await bot.activateBlock(dirt, vec3(0, 1, 0)).catch(console.log);
+    let dirt = bot.blockAt(harvest.position.offset(0, -1, 0));
+    await bot.activateBlock(dirt, vec3(0, 1, 0)).catch(console.log);
 }
 
+let outOfCarrotsLogged = false;
+
 async function fillFarmland() {
-	let farmBlocks = await bot.findBlocks({
-		matching: (block)=>{
-			return block.name === "farmland";
-		},
-		count: 256,
-		maxDistance: 64,
-	});
+    let farmBlocks = await bot.findBlocks({
+        matching: (block)=>{
+            return block.name === "farmland";
+        },
+        count: 256,
+        maxDistance: 64,
+    });
 
-	let vacant = farmBlocks.find(position=>{
-		let topBlock = bot.blockAt(position.offset(0, 1, 0));
-		return topBlock.name === "air" || topBlock.name === "cave_air";
-	});
+    let vacant = farmBlocks.find(position=>{
+        let topBlock = bot.blockAt(position.offset(0, 1, 0));
+        let blockBelow = bot.blockAt(position.offset(0, -1, 0));
+        return topBlock.name === "air" && blockBelow.name !== "water";
+    });
 
-	if (!vacant) return;
+    if (!vacant) return;
 
-	await bot.goto(vacant);
+    if (!checkInventory("carrot")) {
+        if (!outOfCarrotsLogged) {
+            console.log("Out of carrots. Cannot fill farmland.");
+            outOfCarrotsLogged = true;
+        }
+        return;
+    } else {
+        outOfCarrotsLogged = false; // Reset the flag when carrots are available
+    }
 
-	if (!bot.heldItem || bot.heldItem.name != seedName) await bot.equip(mcData.itemsByName[seedName].id);
+    await bot.goto(vacant);
 
-	await bot.activateBlock(bot.blockAt(vacant), vec3(0, 1, 0)).catch(console.log);
+    if (!bot.heldItem || bot.heldItem.name != seedName) await bot.equip(mcData.itemsByName[seedName].id);
+
+    await bot.activateBlock(bot.blockAt(vacant), vec3(0, 1, 0)).catch(console.log);
 }
 
 function readyCrop() {
@@ -520,42 +496,26 @@ function readyCrop() {
 }
 
 async function takeSnackBreak() {
-	let bread_id = mcData.itemsByName['bread'].id;
-	snackTime = false;
+    let bread_id = mcData.itemsByName['carrot'].id;
+    snackTime = false;
 
-	let table = bot.findBlock({
-		matching: (block)=>{
-			return block.name === "crafting_table";
-		},
-	});
+    if (bot.food === 20) {
+        console.log(`Too full to eat.`);
+        return;
+    }
 
-	if (!table) {
-		console.log("Couldn't find a table.");
-		return;
-	}
+    if (mcData.itemsByName['carrot']) {
+        if (bot.heldItem && typeof bot.heldItem === 'object') {
+            await bot.equip(bread_id);
+            await bot.consume();
 
-	await bot.goto(table.position);
-
-	let recipe = bot.recipesFor(bread_id, null, 1, table)[0];
-
-	if (!recipe) {
-		console.log("Couldn't find a recipe.");
-		return;
-	}
-
-	await bot.craft(recipe, 1, table);
-
-	console.log("Made bread.");
-
-	if (bot.food === 20) {
-		console.log(`Too full to eat.`);
-		return;
-	}
-
-	await bot.equip(bread_id);
-	await bot.consume();
-
-	console.log("Ate bread.");
+            console.log("Ate carrot.");
+        } else {
+            console.log("Invalid item object for equip.");
+        }
+    } else {
+        console.log("Carrot item not found.");
+    }
 }
 
 async function startFarm() {
@@ -597,7 +557,7 @@ async function startFarm() {
 	await bot.waitForTicks(1);
 
 	// Plant seeds on dirt
-	if (!checkInventory("wheat_seeds")) await getSeeds();
+	if (!checkInventory("carrot")) await getSeeds();
 	if (!bot.heldItem || bot.heldItem.name !== seedName) await bot.equip(mcData.itemsByName[seedName].id).catch(console.log);
 
 	await bot.goto(farmPosition);

@@ -1,0 +1,1 @@
+- [ ] Use the [online pathfinder](https://github.com/PrismarineJS/mineflayer-pathfinder) instead of pathfinder.js
